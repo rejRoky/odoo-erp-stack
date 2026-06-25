@@ -1,33 +1,73 @@
-# Secrets — never commit
+# ── Secrets — never commit ────────────────────────────────────────
 .env
 *.pem
 *.key
 *.p12
+*.pfx
+*.crt
+*.csr
+secrets/
 
-# Python
+# ── Python ────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *.pyo
+*.pyd
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+dist/
+build/
+*.egg-info/
+*.egg
+.eggs/
+pip-log.txt
 
-# Odoo
-*.pyc
+# ── Odoo ──────────────────────────────────────────────────────────
 .odoo_history
+filestore/
+sessions/
 
-# Editor
+# ── Docker ────────────────────────────────────────────────────────
+docker-compose.override.yml
+
+# ── Node / frontend (Odoo assets) ────────────────────────────────
+node_modules/
+npm-debug.log*
+yarn-error.log
+.npm/
+
+# ── Backup / database dumps ───────────────────────────────────────
+*.dump
+*.tar.gz
+*.sql
+*.sql.gz
+*.bak
+/tmp/erp_backup_*/
+
+# ── Logs ──────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── Editor ────────────────────────────────────────────────────────
 .vscode/
 .idea/
 *.swp
+*.swo
 *~
+.project
+.classpath
 
-# OS
+# ── OS ────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
 
-# Docker generated
-docker-compose.override.yml
-
-# Local backup files
-*.dump
-*.tar.gz
-*.sql.gz
+# ── Monitoring data (local volumes — not source files) ───────────
+prometheus_data/
+grafana_data/
+loki_data/
