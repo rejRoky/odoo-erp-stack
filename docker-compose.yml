@@ -1,0 +1,259 @@
+# ── Shared Odoo config reused by both app and longpolling workers ──
+x-odoo-common: &odoo-common
+  build:
+    context: ./odoo
+    dockerfile: Dockerfile
+  image: erp-odoo:17.0
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+    pgbouncer:
+      condition: service_started
+  volumes:
+    - odoo-data:/var/lib/odoo
+    - ./addons:/mnt/extra-addons:ro
+    - odoo-logs:/var/log/odoo
+  env_file: .env
+  restart: unless-stopped
+  networks:
+    - erp-net
+
+services:
+
+  # ── Odoo App (HTTP workers) ───────────────────────────────────────
+  odoo:
+    <<: *odoo-common
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8069/web/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # ── Odoo Long-Polling (gevent worker) ────────────────────────────
+  odoo-longpolling:
+    <<: *odoo-common
+    command: ["odoo", "--gevent"]
+
+  # ── NGINX Reverse Proxy ───────────────────────────────────────────
+  nginx:
+    image: nginx:1.25-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - nginx-cache:/var/cache/nginx
+    depends_on:
+      odoo:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - erp-net
+    healthcheck:
+      test: ["CMD-SHELL", "nginx -t && curl -sf http://localhost/web/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── PostgreSQL Primary (read-write) ───────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ./postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+      - ./postgres/init.sh:/docker-entrypoint-initdb.d/init.sh:ro
+      - postgres-logs:/var/log/postgresql
+    command: >
+      postgres
+        -c config_file=/etc/postgresql/postgresql.conf
+        -c hba_file=/etc/postgresql/pg_hba.conf
+    restart: unless-stopped
+    networks:
+      - erp-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ── PostgreSQL Replica (read-only, optional) ──────────────────────
+  # Start with: docker compose --profile replica up -d
+  postgres-replica:
+    image: postgres:16-alpine
+    profiles: ["replica"]
+    environment:
+      PGUSER: ${POSTGRES_REPLICATION_USER}
+      PGPASSWORD: ${POSTGRES_REPLICATION_PASSWORD}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres-replica-data:/var/lib/postgresql/data
+      - ./postgres/replica-entrypoint.sh:/replica-entrypoint.sh:ro
+    entrypoint: ["/bin/sh", "/replica-entrypoint.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - erp-net
+
+  # ── PgBouncer (Connection Pool) ───────────────────────────────────
+  pgbouncer:
+    image: bitnami/pgbouncer:latest
+    environment:
+      POSTGRESQL_HOST: postgres
+      POSTGRESQL_PORT: 5432
+      POSTGRESQL_USERNAME: ${POSTGRES_USER}
+      POSTGRESQL_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRESQL_DATABASE: ${POSTGRES_DB}
+      PGBOUNCER_DATABASE: ${POSTGRES_DB}
+      PGBOUNCER_POOL_MODE: transaction
+      PGBOUNCER_MAX_CLIENT_CONN: 500
+      PGBOUNCER_DEFAULT_POOL_SIZE: 20
+      PGBOUNCER_MIN_POOL_SIZE: 5
+      PGBOUNCER_AUTH_TYPE: md5
+      PGBOUNCER_IGNORE_STARTUP_PARAMETERS: extra_float_digits
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - erp-net
+
+  # ── Redis (Session Store + ORM Cache) ────────────────────────────
+  redis:
+    image: redis:7-alpine
+    command: >
+      redis-server /usr/local/etc/redis/redis.conf
+        --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+      - redis-data:/data
+    restart: unless-stopped
+    networks:
+      - erp-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ── Prometheus ────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.enable-lifecycle"
+    restart: unless-stopped
+    networks:
+      - erp-net
+
+  # ── Grafana ───────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD}
+      GF_SERVER_ROOT_URL: "%(protocol)s://%(domain)s/grafana/"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
+      - loki
+    restart: unless-stopped
+    networks:
+      - erp-net
+
+  # ── Loki (Log Aggregation Backend) ───────────────────────────────
+  loki:
+    image: grafana/loki:latest
+    command: -config.file=/etc/loki/loki-config.yml
+    volumes:
+      - ./monitoring/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki-data:/loki
+    restart: unless-stopped
+    networks:
+      - erp-net
+
+  # ── Promtail (Log Shipper) ────────────────────────────────────────
+  promtail:
+    image: grafana/promtail:latest
+    command: -config.file=/etc/promtail/promtail-config.yml
+    volumes:
+      - ./monitoring/promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - odoo-logs:/var/log/odoo:ro
+    depends_on:
+      - loki
+    restart: unless-stopped
+    networks:
+      - erp-net
+
+  # ── PostgreSQL Exporter ───────────────────────────────────────────
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:latest
+    environment:
+      DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - erp-net
+
+  # ── Redis Exporter ────────────────────────────────────────────────
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    environment:
+      REDIS_ADDR: "redis://redis:6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    depends_on:
+      - redis
+    restart: unless-stopped
+    networks:
+      - erp-net
+
+  # ── Portainer (Container Management UI) ──────────────────────────
+  portainer:
+    image: portainer/portainer-ce:latest
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer-data:/data
+    restart: unless-stopped
+    networks:
+      - erp-net
+
+volumes:
+  odoo-data:
+  odoo-logs:
+  postgres-data:
+  postgres-replica-data:
+  postgres-logs:
+  redis-data:
+  nginx-cache:
+  prometheus-data:
+  grafana-data:
+  loki-data:
+  portainer-data:
+
+networks:
+  erp-net:
+    driver: bridge

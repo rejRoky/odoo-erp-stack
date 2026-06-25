@@ -1,0 +1,45 @@
+# Development overrides — use with:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+# Or: make dev-up
+
+services:
+
+  odoo:
+    environment:
+      ODOO_LOG_LEVEL: debug
+    volumes:
+      - ./addons:/mnt/extra-addons  # writable in dev for hot-reload
+    ports:
+      - "8069:8069"
+
+  odoo-longpolling:
+    ports:
+      - "8072:8072"
+
+  nginx:
+    volumes:
+      - ./nginx/nginx.dev.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "80:80"
+    # No SSL in dev — HTTP only
+
+  postgres:
+    ports:
+      - "5432:5432"  # expose for local DB tools (pgAdmin, DBeaver)
+
+  redis:
+    ports:
+      - "6379:6379"  # expose for local Redis inspection
+
+  prometheus:
+    ports:
+      - "9090:9090"
+
+  grafana:
+    ports:
+      - "3000:3000"
+
+  portainer:
+    ports:
+      - "9000:9000"
+      - "8000:8000"
