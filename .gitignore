@@ -1,0 +1,33 @@
+# Secrets — never commit
+.env
+*.pem
+*.key
+*.p12
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+
+# Odoo
+*.pyc
+.odoo_history
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker generated
+docker-compose.override.yml
+
+# Local backup files
+*.dump
+*.tar.gz
+*.sql.gz
