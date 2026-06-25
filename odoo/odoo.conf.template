@@ -1,0 +1,43 @@
+[options]
+; Add-on paths — custom first so overrides win
+addons_path = /mnt/extra-addons,/usr/lib/python3/dist-packages/odoo/addons
+
+; Database connection (via PgBouncer connection pool)
+db_host     = pgbouncer
+db_port     = 5432
+db_user     = ${POSTGRES_USER}
+db_password = ${POSTGRES_PASSWORD}
+db_name     = ${POSTGRES_DB}
+db_maxconn  = 32
+
+; Master password (protects DB create/drop in the web UI)
+admin_passwd = ${ODOO_MASTER_PASSWORD}
+
+; Workers — set to (2 × CPU cores) + 1 for production
+; For a 4-core server: workers = 9
+workers          = 4
+max_cron_threads = 2
+
+; Memory limits (bytes)
+; Hard: 2.5 GB — worker killed if exceeded
+; Soft: 2 GB — worker recycled after current request
+limit_memory_hard   = 2684354560
+limit_memory_soft   = 2147483648
+
+; Request limits
+limit_request    = 8192
+limit_time_cpu   = 60
+limit_time_real  = 120
+
+; Long-polling port (gevent worker)
+longpolling_port = 8072
+
+; Trust X-Forwarded-* headers from NGINX
+proxy_mode = True
+
+; Logging
+logfile   = /var/log/odoo/odoo.log
+log_level = warn
+
+; Security: hide database list on login page
+list_db = False
